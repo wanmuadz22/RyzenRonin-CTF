@@ -13,58 +13,44 @@ const CATEGORY_COLORS = {
 const catColor = c => CATEGORY_COLORS[c] || "#9b98a6";
 
 const STORE_KEY = "ryzenronin-ctf-solved";
+// { challengeId: submittedFlag }
 function loadSolved() {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || []; } catch (e) { return []; }
+  try {
+    const v = JSON.parse(localStorage.getItem(STORE_KEY));
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch (e) { return {}; }
 }
-function saveSolved(list) {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); } catch (e) { /* storage blocked */ }
+function saveSolved(map) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(map)); } catch (e) { /* storage blocked */ }
 }
+const isSolved = id => Object.prototype.hasOwnProperty.call(loadSolved(), id);
 
 const esc = s => String(s).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 
-// SHA-256: Web Crypto when available, pure-JS fallback otherwise (e.g. file://).
-async function sha256Hex(text) {
-  if (window.crypto && crypto.subtle) {
-    try {
-      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-      return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
-    } catch (e) { /* fall through */ }
-  }
-  return sha256Fallback(text);
+// Flags are checked with PBKDF2-SHA256 (300k rounds, per-challenge salt), so the hashes in
+// challenges.js can't be cheaply brute-forced or dictionary-guessed offline.
+const PBKDF2_ROUNDS = 300000;
+
+async function flagHash(id, flag) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(flag), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt: enc.encode("RyzenRonin|" + id), iterations: PBKDF2_ROUNDS }, key, 256);
+  return [...new Uint8Array(bits)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-function sha256Fallback(ascii) {
-  const K = [], H = [];
-  let n = 2, found = 0;
-  const isPrime = x => { for (let f = 2; f * f <= x; f++) if (x % f === 0) return false; return true; };
-  const frac = x => ((x - Math.floor(x)) * 4294967296) | 0;
-  while (found < 64) {
-    if (isPrime(n)) { if (found < 8) H[found] = frac(Math.pow(n, 1 / 2)); K[found++] = frac(Math.pow(n, 1 / 3)); }
-    n++;
-  }
-  const bytes = Array.from(new TextEncoder().encode(ascii));
-  const bitLen = bytes.length * 8;
-  bytes.push(0x80);
-  while (bytes.length % 64 !== 56) bytes.push(0);
-  for (let i = 7; i >= 0; i--) bytes.push(i >= 4 ? 0 : (bitLen >>> (i * 8)) & 0xff);
-  const rotr = (x, r) => (x >>> r) | (x << (32 - r));
-  for (let off = 0; off < bytes.length; off += 64) {
-    const w = new Array(64);
-    for (let i = 0; i < 16; i++) w[i] = (bytes[off + i * 4] << 24) | (bytes[off + i * 4 + 1] << 16) | (bytes[off + i * 4 + 2] << 8) | bytes[off + i * 4 + 3];
-    for (let i = 16; i < 64; i++) {
-      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
-      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
-      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
-    }
-    let [a, b, c, d, e, f, g, h] = H;
-    for (let i = 0; i < 64; i++) {
-      const t1 = (h + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0;
-      const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
-      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
-    }
-    [a, b, c, d, e, f, g, h].forEach((v, i) => { H[i] = (H[i] + v) | 0; });
-  }
-  return H.map(v => (v >>> 0).toString(16).padStart(8, "0")).join("");
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Solve proof: a code built from the real flags a player submitted. Organizers verify it offline.
+async function makeProof(name) {
+  const solved = loadSolved();
+  const ids = Object.keys(solved).filter(id => CHALLENGES.some(c => c.id === id)).sort();
+  const payload = ["RyzenRonin-proof", name.trim(), ...ids.map(id => id + "=" + solved[id])].join("|");
+  const code = (await sha256Hex(payload)).slice(0, 20);
+  return `${name.trim()} | ${ids.join(",") || "none"} | ${code}`;
 }
 
 // ---------- Board (index.html) ----------
@@ -74,7 +60,6 @@ let activeCategory = "All";
 function renderBoard() {
   const grid = document.getElementById("board");
   if (!grid) return;
-  const solved = loadSolved();
   const categories = [...new Set(CHALLENGES.map(c => c.category))];
 
   const chips = document.getElementById("chips");
@@ -93,7 +78,7 @@ function renderBoard() {
   const list = CHALLENGES.filter(c => activeCategory === "All" || c.category === activeCategory);
   grid.innerHTML = list.length ? "" : `<div class="card empty" style="grid-column:1/-1">🏯 Challenges are being forged. Check back soon, ronin.</div>`;
   list.forEach(c => {
-    const done = solved.includes(c.id);
+    const done = isSolved(c.id);
     const a = document.createElement("a");
     a.className = "card level chall" + (done ? " solved" : "");
     a.href = "challenge.html?id=" + encodeURIComponent(c.id);
@@ -107,8 +92,8 @@ function renderBoard() {
   });
 
   const total = CHALLENGES.reduce((s, c) => s + c.points, 0);
-  const earned = CHALLENGES.filter(c => solved.includes(c.id)).reduce((s, c) => s + c.points, 0);
-  const nSolved = CHALLENGES.filter(c => solved.includes(c.id)).length;
+  const earned = CHALLENGES.filter(c => isSolved(c.id)).reduce((s, c) => s + c.points, 0);
+  const nSolved = CHALLENGES.filter(c => isSolved(c.id)).length;
   document.getElementById("score").textContent = `${earned} / ${total} pts · ${nSolved} / ${CHALLENGES.length} flags`;
   document.getElementById("bar").style.width = total ? (earned / total * 100) + "%" : "0";
 }
@@ -126,7 +111,7 @@ function renderChallenge() {
   }
   document.title = `${c.title} · Ryzen Ronin CTF`;
   root.style.setProperty("--cat", catColor(c.category));
-  const done = loadSolved().includes(c.id);
+  const done = isSolved(c.id);
 
   const files = (c.files || []).map(f => `<a href="${esc(f.path)}" download>⬇ ${esc(f.name)}</a>`).join("");
   const links = (c.links || []).map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">🔗 ${esc(l.name)}</a>`).join("");
@@ -166,10 +151,12 @@ function renderChallenge() {
       status.textContent = "Flag format is RyzenRonin{...}";
       return;
     }
-    if ((await sha256Hex(guess)) === c.hash) {
-      const list = loadSolved();
-      if (!list.includes(c.id)) list.push(c.id);
-      saveSolved(list);
+    status.className = "status";
+    status.textContent = "Checking…";
+    if ((await flagHash(c.id, guess)) === c.hash) {
+      const map = loadSolved();
+      map[c.id] = guess;
+      saveSolved(map);
       renderChallenge();
     } else {
       status.className = "status bad";
@@ -181,7 +168,16 @@ function renderChallenge() {
 }
 
 function resetProgress() {
-  if (confirm("Wipe your progress?")) { saveSolved([]); renderBoard(); }
+  if (confirm("Wipe your progress?")) { saveSolved({}); renderBoard(); }
+}
+
+async function showProof() {
+  const name = document.getElementById("proof-name").value;
+  const out = document.getElementById("proof-out");
+  if (!name.trim()) { out.hidden = false; out.className = "denied"; out.textContent = "Enter your name first."; return; }
+  out.hidden = false;
+  out.className = "flagbox";
+  out.textContent = await makeProof(name);
 }
 
 document.addEventListener("DOMContentLoaded", () => { renderBoard(); renderChallenge(); });

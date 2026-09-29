@@ -23,7 +23,8 @@ RyzenRonin{...}
 - Hints are free. Use them when stuck.
 - Don't attack GitHub or any infrastructure that isn't explicitly part of a challenge.
 - Don't post flags publicly. Share the link instead.
-- The flag checker only stores SHA-256 hashes, so reading this repo's source won't hand you the answers.
+- The flag checker only stores salted, slow (PBKDF2) hashes, so reading this repo's source won't hand you the answers.
+- To get your solves counted, use **Proof of solves** on the board and send the code to the organizers.
 
 ## 📁 Structure
 

@@ -1,5 +1,5 @@
 // Ryzen Ronin CTF — challenge list.
-// Flags are stored only as SHA-256 hashes. Challenge files live in files/<id>/.
+// Flags are stored only as salted PBKDF2-SHA256 hashes (see assets/ctf.js). Challenge files live in files/<id>/.
 //
 // Entry shape:
 // {
@@ -13,7 +13,7 @@
 //   files: [{ name: "image.jpg", path: "files/short-slug/image.jpg" }],
 //   links: [{ name: "Open the site", url: "https://..." }],
 //   hints: ["hint 1", "hint 2"],
-//   hash: "sha256 of the full flag",
+//   hash: "PBKDF2-SHA256(flag, salt=\"RyzenRonin|<id>\", 300000 rounds)",
 // }
 
 const CHALLENGES = [

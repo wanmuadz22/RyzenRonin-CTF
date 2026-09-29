@@ -36,6 +36,16 @@
     <div class="chips" id="chips" role="toolbar" aria-label="Filter by category"></div>
     <div class="grid" id="board"></div>
 
+    <div class="card" style="margin-top:16px">
+      <h2>🏆 Proof of solves</h2>
+      <p style="color:var(--muted);margin-top:0">Want your score counted? Enter your name and send the organizers the code below. It's built from the flags you actually submitted, so it can't be faked.</p>
+      <div class="row">
+        <input type="text" id="proof-name" placeholder="Your name / handle" aria-label="Your name">
+        <button class="btn" onclick="showProof()">Generate proof</button>
+      </div>
+      <div id="proof-out" hidden></div>
+    </div>
+
     <footer>
       Ryzen Ronin CTF ·
       <a href="#" onclick="resetProgress(); return false;">reset progress</a>
